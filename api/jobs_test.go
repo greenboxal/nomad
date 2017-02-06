@@ -50,6 +50,19 @@ func TestJobs_Register(t *testing.T) {
 	}
 }
 
+func TestJobs_Validate(t *testing.T) {
+	c, s := makeClient(t, nil, nil)
+	defer s.Stop()
+	jobs := c.Jobs()
+
+	// Create a job and attempt to register it
+	job := testJob()
+	_, err := jobs.Validate(job, nil)
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+}
+
 func TestJobs_EnforceRegister(t *testing.T) {
 	c, s := makeClient(t, nil, nil)
 	defer s.Stop()

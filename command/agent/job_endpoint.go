@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/golang/snappy"
+	multierror "github.com/hashicorp/go-multierror"
 	"github.com/hashicorp/nomad/nomad/structs"
 )
 
@@ -108,6 +109,35 @@ func (s *HTTPServer) jobPlan(resp http.ResponseWriter, req *http.Request,
 		return nil, err
 	}
 	setIndex(resp, out.Index)
+	return out, nil
+}
+
+func (s *HTTPServer) ValidateJobRequest(resp http.ResponseWriter, req *http.Request) (interface{}, error) {
+	var args structs.JobValidateRequest
+	if err := decodeBody(req, &args); err != nil {
+		return nil, CodedError(400, err.Error())
+	}
+	if args.Job == nil {
+		return nil, CodedError(400, "Job must be specified")
+	}
+	s.parseRegion(req, &args.Region)
+
+	var out structs.JobValidateResponse
+	if err := s.agent.RPC("Job.Validate", &args, &out); err != nil {
+
+		// Fall back to do local validation
+		args.Job.Canonicalize()
+		if vErr := args.Job.Validate(); vErr != nil {
+			if merr, ok := err.(*multierror.Error); ok {
+				for _, err := range merr.Errors {
+					out.ValidationErrors = append(out.ValidationErrors, err.Error())
+				}
+			}
+		} else {
+			out.ValidationErrors = append(out.ValidationErrors, vErr.Error())
+		}
+	}
+
 	return out, nil
 }
 

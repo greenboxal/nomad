@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strconv"
 	"time"
+
+	"github.com/gorhill/cronexpr"
 )
 
 const (
@@ -14,6 +16,9 @@ const (
 
 	// JobTypeBatch indicates a short-lived process
 	JobTypeBatch = "batch"
+
+	// PeriodicSpecCron is used for a cron spec.
+	PeriodicSpecCron = "cron"
 )
 
 const (
@@ -30,6 +35,12 @@ type Jobs struct {
 // Jobs returns a handle on the jobs endpoints.
 func (c *Client) Jobs() *Jobs {
 	return &Jobs{client: c}
+}
+
+func (j *Jobs) Validate(job *Job, q *WriteOptions) (*WriteMeta, error) {
+	var resp struct{}
+	req := &JobValidateRequest{Job: job}
+	return j.client.write("/v1/validate/job", req, &resp, q)
 }
 
 // Register is used to register a new job. It returns the ID
@@ -213,6 +224,20 @@ type PeriodicConfig struct {
 	ProhibitOverlap bool
 }
 
+// Next returns the closest time instant matching the spec that is after the
+// passed time. If no matching instance exists, the zero value of time.Time is
+// returned. The `time.Location` of the returned value matches that of the
+// passed time.
+func (p *PeriodicConfig) Next(fromTime time.Time) time.Time {
+	if p.SpecType == PeriodicSpecCron {
+		if e, err := cronexpr.Parse(p.Spec); err == nil {
+			return e.Next(fromTime)
+		}
+	}
+
+	return time.Time{}
+}
+
 // ParameterizedJobConfig is used to configure the parameterized job.
 type ParameterizedJobConfig struct {
 	Payload      string
@@ -243,6 +268,16 @@ type Job struct {
 	CreateIndex       uint64
 	ModifyIndex       uint64
 	JobModifyIndex    uint64
+}
+
+// IsPeriodic returns whether a job is periodic.
+func (j *Job) IsPeriodic() bool {
+	return j.Periodic != nil
+}
+
+// IsParameterized returns whether a job is parameterized job.
+func (j *Job) IsParameterized() bool {
+	return j.ParameterizedJob != nil
 }
 
 // JobSummary summarizes the state of the allocations of a job
@@ -369,6 +404,11 @@ func (j *Job) AddTaskGroup(grp *TaskGroup) *Job {
 func (j *Job) AddPeriodicConfig(cfg *PeriodicConfig) *Job {
 	j.Periodic = cfg
 	return j
+}
+
+// JobValidateRequest is used to validate a job
+type JobValidateRequest struct {
+	Job *Job
 }
 
 // RegisterJobRequest is used to serialize a job registration

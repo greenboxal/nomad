@@ -132,69 +132,10 @@ func (c *RunCommand) Run(args []string) int {
 	}
 
 	// Get Job struct from Jobfile
-	job, err := c.JobGetter.StructJob(args[0])
+	job, err := c.JobGetter.ApiJob(args[0])
 	if err != nil {
 		c.Ui.Error(fmt.Sprintf("Error getting job struct: %s", err))
 		return 1
-	}
-
-	// Initialize any fields that need to be.
-	job.Canonicalize()
-
-	// Check that the job is valid
-	if err := job.Validate(); err != nil {
-		c.Ui.Error(fmt.Sprintf("Error validating job: %v", err))
-		return 1
-	}
-
-	// Check if the job is periodic or is a parameterized job
-	periodic := job.IsPeriodic()
-	paramjob := job.IsParameterized()
-
-	// Parse the Vault token
-	if vaultToken == "" {
-		// Check the environment variable
-		vaultToken = os.Getenv("VAULT_TOKEN")
-	}
-
-	if vaultToken != "" {
-		job.VaultToken = vaultToken
-	}
-
-	// Convert it to something we can use
-	apiJob, err := convertStructJob(job)
-	if err != nil {
-		c.Ui.Error(fmt.Sprintf("Error converting job: %s", err))
-		return 1
-	}
-
-	// COMPAT 0.4.1 -> 0.5 Remove in 0.6
-	if apiJob.TaskGroups != nil {
-	OUTSIDE:
-		for _, tg := range apiJob.TaskGroups {
-			if tg.Tasks != nil {
-				for _, task := range tg.Tasks {
-					if task.Resources != nil {
-						if task.Resources.DiskMB > 0 {
-							c.Ui.Error("WARNING: disk attribute is deprecated in the resources block. See https://www.nomadproject.io/docs/job-specification/ephemeral_disk.html")
-							break OUTSIDE
-						}
-					}
-				}
-			}
-		}
-	}
-
-	if output {
-		req := api.RegisterJobRequest{Job: apiJob}
-		buf, err := json.MarshalIndent(req, "", "    ")
-		if err != nil {
-			c.Ui.Error(fmt.Sprintf("Error converting job: %s", err))
-			return 1
-		}
-
-		c.Ui.Output(string(buf))
-		return 0
 	}
 
 	// Get the HTTP client
@@ -209,6 +150,55 @@ func (c *RunCommand) Run(args []string) int {
 		client.SetRegion(r)
 	}
 
+	// Check if the job is periodic or is a parameterized job
+	periodic := job.IsPeriodic()
+	paramjob := job.IsParameterized()
+
+	// Check that the job is valid
+	if _, err := client.Jobs().Validate(job, nil); err != nil {
+		c.Ui.Error(fmt.Sprintf("Error validating job: %v", err))
+		return 1
+	}
+
+	// Parse the Vault token
+	if vaultToken == "" {
+		// Check the environment variable
+		vaultToken = os.Getenv("VAULT_TOKEN")
+	}
+
+	if vaultToken != "" {
+		job.VaultToken = vaultToken
+	}
+
+	// COMPAT 0.4.1 -> 0.5 Remove in 0.6
+	if job.TaskGroups != nil {
+	OUTSIDE:
+		for _, tg := range job.TaskGroups {
+			if tg.Tasks != nil {
+				for _, task := range tg.Tasks {
+					if task.Resources != nil {
+						if task.Resources.DiskMB > 0 {
+							c.Ui.Error("WARNING: disk attribute is deprecated in the resources block. See https://www.nomadproject.io/docs/job-specification/ephemeral_disk.html")
+							break OUTSIDE
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if output {
+		req := api.RegisterJobRequest{Job: job}
+		buf, err := json.MarshalIndent(req, "", "    ")
+		if err != nil {
+			c.Ui.Error(fmt.Sprintf("Error converting job: %s", err))
+			return 1
+		}
+
+		c.Ui.Output(string(buf))
+		return 0
+	}
+
 	// Parse the check-index
 	checkIndex, enforce, err := parseCheckIndex(checkIndexStr)
 	if err != nil {
@@ -219,9 +209,9 @@ func (c *RunCommand) Run(args []string) int {
 	// Submit the job
 	var evalID string
 	if enforce {
-		evalID, _, err = client.Jobs().EnforceRegister(apiJob, checkIndex, nil)
+		evalID, _, err = client.Jobs().EnforceRegister(job, checkIndex, nil)
 	} else {
-		evalID, _, err = client.Jobs().Register(apiJob, nil)
+		evalID, _, err = client.Jobs().Register(job, nil)
 	}
 	if err != nil {
 		if strings.Contains(err.Error(), api.RegisterEnforceIndexErrPrefix) {
@@ -240,7 +230,7 @@ func (c *RunCommand) Run(args []string) int {
 	}
 
 	// Check if we should enter monitor mode
-	if detach || periodic || paramjob {
+	if detach || job.Periodic != nil || job.ParameterizedJob != nil {
 		c.Ui.Output("Job registration successful")
 		if periodic {
 			now := time.Now().UTC()

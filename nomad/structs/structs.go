@@ -282,6 +282,18 @@ type JobDispatchRequest struct {
 	WriteRequest
 }
 
+// JobValidateRequest is used to validate a job
+type JobValidateRequest struct {
+	Job *Job
+	WriteRequest
+}
+
+// JobValidateResponse is the response from validate request
+type JobValidateResponse struct {
+	DriverConfigValidated bool
+	ValidationErrors      []string
+}
+
 // NodeListRequest is used to parameterize a list request
 type NodeListRequest struct {
 	QueryOptions
